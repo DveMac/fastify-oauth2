@@ -62,9 +62,9 @@ const oauthPlugin = fp(function (fastify, options, next) {
   const startRedirectPath = options.startRedirectPath
   const tags = options.tags || []
   const schema = options.schema || { tags: tags }
+  const stateFunctionHasCallback = generateStateFunction.length === 2
 
-  function generateAuthorizationUri (requestObject) {
-    const state = generateStateFunction(requestObject)
+  function buildAuthUri (state) {
     const urlOptions = Object.assign({}, callbackUriParams, {
       redirect_uri: callbackUri,
       scope: scope,
@@ -75,10 +75,27 @@ const oauthPlugin = fp(function (fastify, options, next) {
     return authorizationUri
   }
 
-  function startRedirectHandler (request, reply) {
-    const authorizationUri = generateAuthorizationUri(request)
+  function generateAuthorizationUri (requestObject) {
+    return buildAuthUri(generateStateFunction(requestObject))
+  }
 
-    reply.redirect(authorizationUri)
+  function generateAuthorizationUriAsync (requestObject, callback) {
+    generateStateFunction(requestObject, function (err, state) {
+      if (err) {
+        callback(err)
+        return
+      }
+      callback(null, buildAuthUri(state))
+    })
+  }
+
+  function startRedirectHandler (request, reply) {
+    if (!stateFunctionHasCallback) return reply.redirect(generateAuthorizationUri(request))
+
+    generateAuthorizationUriAsync(request, function (err, location) {
+      if (err) throw err
+      reply.redirect(location)
+    })
   }
 
   const cbk = function (o, code, callback) {
@@ -132,7 +149,7 @@ const oauthPlugin = fp(function (fastify, options, next) {
       oauth2: oauth2,
       getAccessTokenFromAuthorizationCodeFlow,
       getNewAccessTokenUsingRefreshToken,
-      generateAuthorizationUri
+      generateAuthorizationUri: stateFunctionHasCallback ? generateAuthorizationUriAsync : generateAuthorizationUri
     })
   } catch (e) {
     next(e)
